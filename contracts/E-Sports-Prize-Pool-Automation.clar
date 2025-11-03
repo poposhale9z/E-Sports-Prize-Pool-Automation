@@ -11,6 +11,7 @@
 (define-constant ERR-TOURNAMENT-ALREADY-COMPLETED (err u109))
 (define-constant ERR-INVALID-WINNER-COUNT (err u110))
 (define-constant ERR-PRIZE-ALREADY-CLAIMED (err u111))
+(define-constant ERR-INVALID-SPONSORSHIP-AMOUNT (err u112))
 
 (define-constant TOURNAMENT-STATUS-CREATED u0)
 (define-constant TOURNAMENT-STATUS-ACTIVE u1)
@@ -47,6 +48,13 @@
     second-place-percent: uint,
     third-place-percent: uint
 })
+
+(define-map tournament-sponsors {tournament-id: uint, sponsor: principal} {
+    amount: uint,
+    sponsored-at: uint
+})
+
+(define-map tournament-total-sponsorship uint uint)
 
 (define-public (create-tournament 
     (name (string-ascii 50))
@@ -230,3 +238,28 @@
                                                 u0)
             })
         ERR-TOURNAMENT-NOT-FOUND))
+
+(define-public (sponsor-tournament (tournament-id uint) (amount uint))
+    (let ((tournament (unwrap! (map-get? tournaments tournament-id) ERR-TOURNAMENT-NOT-FOUND))
+          (current-height stacks-block-height)
+          (current-sponsorship (default-to u0 (map-get? tournament-total-sponsorship tournament-id)))
+          (existing-sponsor (map-get? tournament-sponsors {tournament-id: tournament-id, sponsor: tx-sender}))
+          (existing-amount (match existing-sponsor sponsor-data (get amount sponsor-data) u0))
+          (new-total-amount (+ amount existing-amount)))
+        (asserts! (> amount u0) ERR-INVALID-SPONSORSHIP-AMOUNT)
+        (asserts! (< (get status tournament) TOURNAMENT-STATUS-COMPLETED) ERR-TOURNAMENT-ALREADY-COMPLETED)
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (map-set tournament-sponsors {tournament-id: tournament-id, sponsor: tx-sender} {
+            amount: new-total-amount,
+            sponsored-at: current-height
+        })
+        (map-set tournament-total-sponsorship tournament-id (+ current-sponsorship amount))
+        (map-set tournaments tournament-id 
+            (merge tournament {prize-pool: (+ (get prize-pool tournament) amount)}))
+        (ok amount)))
+
+(define-read-only (get-tournament-sponsorship (tournament-id uint))
+    (default-to u0 (map-get? tournament-total-sponsorship tournament-id)))
+
+(define-read-only (get-sponsor-contribution (tournament-id uint) (sponsor principal))
+    (map-get? tournament-sponsors {tournament-id: tournament-id, sponsor: sponsor}))
